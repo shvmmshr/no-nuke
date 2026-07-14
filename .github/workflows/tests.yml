@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.8", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run test suite (stdlib only, no deps)
+        run: python -m unittest discover -s tests -v
+      - name: CLI smoke test
+        run: |
+          set -e
+          python bin/no-nuke check "rm -rf /"        && exit 1 || test $? -eq 2
+          python bin/no-nuke check "git reset --hard" && exit 1 || test $? -eq 1
+          python bin/no-nuke check "ls -la"
