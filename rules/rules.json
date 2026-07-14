@@ -1,0 +1,290 @@
+{
+  "version": 1,
+  "description": "no-nuke declarative ruleset. Structural checks (rm+paths, git, sql, shell-exec) live in engine.py; these cover command+token matches.",
+  "rules": [
+    {
+      "id": "fs.mkfs",
+      "category": "filesystem",
+      "tier": "critical",
+      "match": { "cmd": "mkfs*" },
+      "reason": "mkfs formats a filesystem, irreversibly destroying every byte on the target device.",
+      "suggestion": "Never format a device from an agent. Have a human do it deliberately."
+    },
+    {
+      "id": "fs.shred",
+      "category": "filesystem",
+      "tier": "high",
+      "match": { "cmd": "shred" },
+      "reason": "shred overwrites a file's contents so it is unrecoverable — there is no undo.",
+      "suggestion": "If you only need to remove the file, use rm/trash; reserve shred for genuinely sensitive data you are sure about."
+    },
+    {
+      "id": "fs.wipefs",
+      "category": "filesystem",
+      "tier": "critical",
+      "match": { "cmd": "wipefs", "contains_any": ["-a", "--all"] },
+      "reason": "wipefs -a erases all filesystem signatures from a device, making its data unrecoverable.",
+      "suggestion": "Do not wipe device signatures from an agent."
+    },
+    {
+      "id": "fs.fdisk",
+      "category": "filesystem",
+      "tier": "critical",
+      "match": { "cmd": "fdisk", "arg_regex": "/dev/" },
+      "reason": "fdisk repartitions a disk, which can destroy all partitions and data on it.",
+      "suggestion": "Partitioning a disk should be done by a human, not an agent."
+    },
+    {
+      "id": "fs.find_delete",
+      "category": "filesystem",
+      "tier": "high",
+      "match": { "cmd": "find", "contains_all": ["-delete"] },
+      "reason": "`find ... -delete` recursively deletes every matching file with no undo.",
+      "suggestion": "Run the find without -delete first to review the match list, then delete deliberately."
+    },
+    {
+      "id": "fs.find_exec_rm",
+      "category": "filesystem",
+      "tier": "high",
+      "match": { "cmd": "find", "arg_regex": "-exec\\s+rm\\b" },
+      "reason": "`find ... -exec rm` recursively deletes every matched path.",
+      "suggestion": "Review the match list first (drop -exec rm), then delete deliberately."
+    },
+    {
+      "id": "fs.rsync_delete",
+      "category": "filesystem",
+      "tier": "high",
+      "match": { "cmd": "rsync", "contains_any": ["--delete", "--delete-after", "--delete-before", "--delete-excluded"] },
+      "reason": "`rsync --delete` removes files in the destination that are absent from the source; a wrong source can empty the destination.",
+      "suggestion": "Run with --dry-run first to see exactly what would be deleted."
+    },
+    {
+      "id": "fs.chmod_recursive",
+      "category": "filesystem",
+      "tier": "medium",
+      "match": { "cmd": "chmod", "contains_any": ["-R", "--recursive"] },
+      "reason": "Recursive chmod can break permissions across an entire tree (e.g. making keys world-readable or files non-executable).",
+      "suggestion": "Scope the change to specific files, or confirm the tree is correct first."
+    },
+    {
+      "id": "fs.chown_recursive",
+      "category": "filesystem",
+      "tier": "medium",
+      "match": { "cmd": "chown", "contains_any": ["-R", "--recursive"] },
+      "reason": "Recursive chown can break ownership across an entire tree and lock you out of files.",
+      "suggestion": "Scope the change to specific files, or confirm the tree is correct first."
+    },
+
+    {
+      "id": "git.gc_prune",
+      "category": "git",
+      "tier": "medium",
+      "match": { "cmd": "git", "subcmd": "gc", "arg_regex": "--prune=now|--prune=all" },
+      "reason": "`git gc --prune=now` immediately deletes unreachable objects, making just-orphaned commits unrecoverable.",
+      "suggestion": "Recover any needed commits via `git reflog` before pruning."
+    },
+    {
+      "id": "git.reflog_expire",
+      "category": "git",
+      "tier": "high",
+      "match": { "cmd": "git", "subcmd": "reflog", "arg_regex": "expire.*(--all|--expire=now)" },
+      "reason": "Expiring the reflog removes your safety net for recovering lost commits.",
+      "suggestion": "Keep the reflog intact; it is often the only way back after a bad reset."
+    },
+
+    {
+      "id": "db.terraform_destroy",
+      "category": "cloud",
+      "tier": "critical",
+      "match": { "cmd": "terraform", "subcmd": "destroy" },
+      "reason": "`terraform destroy` tears down all infrastructure managed by the current state.",
+      "suggestion": "Run `terraform plan -destroy`, review it, and get explicit human sign-off first."
+    },
+    {
+      "id": "db.terraform_apply_autoapprove",
+      "category": "cloud",
+      "tier": "high",
+      "match": { "cmd": "terraform", "subcmd": "apply", "contains_any": ["-auto-approve", "--auto-approve"] },
+      "reason": "`terraform apply -auto-approve` applies changes (possibly destructive replacements) with no review.",
+      "suggestion": "Drop -auto-approve so the plan can be reviewed before applying."
+    },
+    {
+      "id": "db.aws_s3_rb",
+      "category": "cloud",
+      "tier": "critical",
+      "match": { "cmd": "aws", "subcmd": "s3", "arg_regex": "\\brb\\b" },
+      "reason": "`aws s3 rb` removes an S3 bucket (with --force, all its objects too).",
+      "suggestion": "Confirm the bucket name; export objects first if the data matters."
+    },
+    {
+      "id": "db.aws_s3_rm_recursive",
+      "category": "cloud",
+      "tier": "high",
+      "match": { "cmd": "aws", "subcmd": "s3", "arg_regex": "\\brm\\b.*--recursive" },
+      "reason": "`aws s3 rm --recursive` deletes every object under the prefix.",
+      "suggestion": "Add --dryrun first to see exactly what would be deleted."
+    },
+    {
+      "id": "db.aws_dynamodb_delete_table",
+      "category": "cloud",
+      "tier": "critical",
+      "match": { "cmd": "aws", "subcmd": "dynamodb", "arg_regex": "delete-table" },
+      "reason": "Deleting a DynamoDB table removes the table and all of its items.",
+      "suggestion": "Take an on-demand backup first and confirm the table name."
+    },
+    {
+      "id": "cloud.gcloud_delete",
+      "category": "cloud",
+      "tier": "high",
+      "match": { "cmd": "gcloud", "arg_regex": "\\bdelete\\b" },
+      "reason": "A gcloud delete removes cloud resources, which may include data-bearing services.",
+      "suggestion": "Confirm the resource and project; consider snapshots/backups first."
+    },
+    {
+      "id": "cloud.kubectl_delete_all",
+      "category": "cloud",
+      "tier": "high",
+      "match": { "cmd": "kubectl", "subcmd": "delete", "arg_regex": "--all\\b" },
+      "reason": "`kubectl delete ... --all` deletes every resource of that type in the namespace.",
+      "suggestion": "Delete named resources instead of --all, and double-check the namespace/context."
+    },
+    {
+      "id": "cloud.kubectl_delete_ns_pv",
+      "category": "cloud",
+      "tier": "high",
+      "match": { "cmd": "kubectl", "subcmd": "delete", "arg_regex": "\\b(namespace|ns|pv|persistentvolume|pvc)\\b" },
+      "reason": "Deleting a namespace or persistent volume can destroy stateful data and everything inside it.",
+      "suggestion": "Confirm the target and back up any persistent data first."
+    },
+    {
+      "id": "cloud.kubectl_delete_context",
+      "category": "cloud",
+      "tier": "medium",
+      "match": { "cmd": "kubectl", "subcmd": "delete" },
+      "reason": "`kubectl delete` removes live cluster resources.",
+      "suggestion": "Verify you are pointed at the intended cluster/namespace before deleting."
+    },
+    {
+      "id": "cloud.helm_uninstall",
+      "category": "cloud",
+      "tier": "medium",
+      "match": { "cmd": "helm", "contains_any": ["uninstall", "delete"] },
+      "reason": "Uninstalling a Helm release removes its Kubernetes resources.",
+      "suggestion": "Confirm the release name and namespace first."
+    },
+
+    {
+      "id": "docker.system_prune",
+      "category": "docker",
+      "tier": "medium",
+      "match": { "cmd": "docker", "subcmd": "system", "arg_regex": "prune" },
+      "reason": "`docker system prune` removes stopped containers, unused networks, images and (with --volumes) data volumes.",
+      "suggestion": "Run without --volumes, or review `docker ps -a` / `docker volume ls` first."
+    },
+    {
+      "id": "docker.volume_rm",
+      "category": "docker",
+      "tier": "high",
+      "match": { "cmd": "docker", "subcmd": "volume", "arg_regex": "\\b(rm|prune)\\b" },
+      "reason": "Removing a Docker volume permanently deletes the data stored in it.",
+      "suggestion": "Confirm the volume is not backing a database you need."
+    },
+    {
+      "id": "docker.rmi",
+      "category": "docker",
+      "tier": "medium",
+      "match": { "cmd": "docker", "subcmd": "rmi" },
+      "reason": "`docker rmi` deletes images; re-pulling or rebuilding may be slow or impossible offline.",
+      "suggestion": "Make sure the image is reproducible before deleting it."
+    },
+
+    {
+      "id": "sys.shutdown",
+      "category": "system",
+      "tier": "critical",
+      "match": { "cmd": "shutdown" },
+      "reason": "`shutdown` powers off or halts the machine, killing all work in progress.",
+      "suggestion": "An agent should never shut down the machine."
+    },
+    {
+      "id": "sys.reboot",
+      "category": "system",
+      "tier": "critical",
+      "match": { "cmd": "reboot" },
+      "reason": "`reboot` restarts the machine, killing all running processes and sessions.",
+      "suggestion": "An agent should never reboot the machine."
+    },
+    {
+      "id": "sys.halt",
+      "category": "system",
+      "tier": "critical",
+      "match": { "cmd": "halt" },
+      "reason": "`halt` stops the machine immediately.",
+      "suggestion": "An agent should never halt the machine."
+    },
+    {
+      "id": "sys.crontab_remove",
+      "category": "system",
+      "tier": "critical",
+      "match": { "cmd": "crontab", "contains_all": ["-r"] },
+      "reason": "`crontab -r` deletes all of the user's scheduled cron jobs with no confirmation.",
+      "suggestion": "Use `crontab -l` to back up, and `crontab -e` to edit specific entries."
+    },
+    {
+      "id": "sys.killall",
+      "category": "system",
+      "tier": "high",
+      "match": { "cmd": "killall" },
+      "reason": "`killall` terminates every process matching the name, which can kill more than intended.",
+      "suggestion": "Target a specific PID with `kill <pid>` after checking `ps`/`pgrep`."
+    },
+    {
+      "id": "sys.pkill_9",
+      "category": "system",
+      "tier": "medium",
+      "match": { "cmd": "pkill", "contains_any": ["-9", "-KILL"] },
+      "reason": "`pkill -9` force-kills matching processes without letting them clean up.",
+      "suggestion": "Try a graceful signal first, and target a specific process."
+    },
+    {
+      "id": "sys.brew_uninstall",
+      "category": "system",
+      "tier": "medium",
+      "match": { "cmd": "brew", "contains_any": ["uninstall", "remove", "rm"] },
+      "reason": "Uninstalling a package may remove tooling other work depends on.",
+      "suggestion": "Confirm nothing else needs the package before removing it."
+    },
+    {
+      "id": "sys.apt_remove",
+      "category": "system",
+      "tier": "high",
+      "match": { "cmd": "apt*", "contains_any": ["remove", "purge", "autoremove"] },
+      "reason": "apt remove/purge/autoremove can uninstall system packages and their config, potentially breaking the OS.",
+      "suggestion": "Review exactly which packages will be removed before proceeding."
+    },
+    {
+      "id": "sys.npm_global_uninstall",
+      "category": "system",
+      "tier": "medium",
+      "match": { "cmd": "npm", "subcmd": "uninstall", "contains_any": ["-g", "--global"] },
+      "reason": "Removing a global npm package can break globally-installed CLI tools.",
+      "suggestion": "Confirm the tool is not relied upon elsewhere first."
+    },
+    {
+      "id": "sys.launchctl_unload",
+      "category": "system",
+      "tier": "medium",
+      "match": { "cmd": "launchctl", "contains_any": ["unload", "remove", "bootout"] },
+      "reason": "Unloading a launchd service stops background daemons that other things may depend on.",
+      "suggestion": "Confirm the service is safe to stop."
+    },
+    {
+      "id": "sys.defaults_delete",
+      "category": "system",
+      "tier": "medium",
+      "match": { "cmd": "defaults", "subcmd": "delete" },
+      "reason": "`defaults delete` erases an application's stored preferences.",
+      "suggestion": "Back up the plist first if the settings matter."
+    }
+  ]
+}

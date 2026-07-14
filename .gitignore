@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.no-nuke.json.no-nuke.bak.*
+settings.json.no-nuke.bak.*
+.DS_Store

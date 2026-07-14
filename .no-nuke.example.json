@@ -1,0 +1,13 @@
+{
+  "//": "Copy to .no-nuke.json at your repo root to customize. Critical rules cannot be relaxed.",
+  "disabled": false,
+  "allow": [],
+  "tier_overrides": {},
+  "protected_paths": [
+    "./data",
+    "./migrations"
+  ],
+  "protected_names": [
+    "*.pem"
+  ]
+}

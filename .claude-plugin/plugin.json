@@ -1,0 +1,17 @@
+{
+  "name": "no-nuke",
+  "version": "0.1.0",
+  "description": "Destructive-command guard for AI coding agents. Intercepts every Bash/Write/Edit before it runs and blocks, asks, or warns on dangerous operations (rm -rf, git reset --hard, DROP DATABASE, terraform destroy, and more) via a tiered ruleset with protected paths, per-project config, and an audit log.",
+  "author": {
+    "name": "no-nuke"
+  },
+  "keywords": [
+    "safety",
+    "guardrail",
+    "destructive-commands",
+    "hooks",
+    "security"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "skills": "./skills"
+}

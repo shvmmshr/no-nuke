@@ -1,0 +1,13 @@
+{
+  "name": "no-nuke-marketplace",
+  "owner": {
+    "name": "no-nuke"
+  },
+  "plugins": [
+    {
+      "name": "no-nuke",
+      "source": "./",
+      "description": "Destructive-command guard for AI coding agents: blocks/asks/warns on rm -rf, git reset --hard, DROP DATABASE, terraform destroy and more before they run."
+    }
+  ]
+}

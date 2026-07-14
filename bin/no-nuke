@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""
+no-nuke CLI — the framework-agnostic integration surface.
+
+    no-nuke check "<command>" [--cwd DIR] [--json]
+
+Exit codes (so any agent framework can gate on them):
+    0  allow / warn   (safe to run; warn prints a note)
+    1  ask            (should be confirmed by a human)
+    2  deny           (must be blocked)
+"""
+
+import argparse
+import json
+import os
+import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+_EXIT = {"allow": 0, "warn": 0, "ask": 1, "deny": 2}
+_COLOR = {"deny": "\033[91m", "ask": "\033[93m", "warn": "\033[96m",
+          "allow": "\033[92m"}
+_RESET = "\033[0m"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="no-nuke")
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_check = sub.add_parser("check", help="evaluate a command")
+    p_check.add_argument("command", help="the shell command to evaluate")
+    p_check.add_argument("--cwd", default=os.getcwd(),
+                         help="working directory to resolve paths against")
+    p_check.add_argument("--json", action="store_true",
+                         help="emit the full verdict as JSON")
+    p_check.add_argument("--no-color", action="store_true")
+
+    args = parser.parse_args(argv)
+    if args.cmd != "check":
+        parser.print_help()
+        return 0
+
+    from engine.engine import check
+    from engine.config import load_config
+
+    config = load_config(args.cwd)
+    verdict = check(args.command, cwd=args.cwd, config=config)
+
+    if args.json:
+        print(json.dumps(verdict.to_dict(), indent=2))
+        return _EXIT[verdict.action]
+
+    if verdict.action == "allow":
+        label = "ALLOW"
+    else:
+        label = verdict.action.upper()
+    use_color = sys.stdout.isatty() and not args.no_color
+    tag = f"{_COLOR.get(verdict.action, '')}{label}{_RESET}" if use_color else label
+
+    print(f"{tag}: {args.command}")
+    if verdict.rule_id:
+        print(f"  rule:   {verdict.rule_id} ({verdict.tier})")
+        print(f"  reason: {verdict.reason}")
+        if verdict.suggestion:
+            print(f"  safer:  {verdict.suggestion}")
+    return _EXIT[verdict.action]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
