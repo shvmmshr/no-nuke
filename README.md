@@ -1,11 +1,11 @@
 # no-nuke 🚫☢️
 
-**A destructive-command guard for AI coding agents.**
+**A destructive-command guard for AI coding agents.** Works with **Claude Code**
+and **OpenAI Codex CLI**.
 
-AI agents (Claude Code, and others) occasionally run commands that wreck your
-machine — `rm -rf` the wrong directory, `git reset --hard` over your work,
-`DROP DATABASE` on prod. Plain instructions don't help: a confused or
-prompt-injected agent ignores them.
+AI agents occasionally run commands that wreck your machine — `rm -rf` the wrong
+directory, `git reset --hard` over your work, `DROP DATABASE` on prod. Plain
+instructions don't help: a confused or prompt-injected agent ignores them.
 
 no-nuke is **hard enforcement**. It hooks into the agent *before* a command
 runs, inspects it structurally (not just a substring match), and **blocks**,
@@ -60,13 +60,36 @@ Add this repo as a plugin so the hook + skill install together:
 ### Personal install (this machine)
 
 ```
-./install.sh
+./install.sh                 # Claude Code always; Codex too if ~/.codex exists
+./install.sh --target codex  # Codex only
+./install.sh --target both   # both
+./install.sh --uninstall     # remove (respects --target)
 ```
 
-This merges the hook into `~/.claude/settings.json` (backing it up first) and
-applies to every session. `./install.sh --uninstall` removes it cleanly.
+- **Claude Code** → merges the hook into `~/.claude/settings.json` (backed up
+  first). Restart / start a new session to activate.
+- **Codex CLI** → writes `~/.codex/hooks.json` with `--harness codex`. **Then
+  run `/hooks` in the Codex TUI and *trust* the no-nuke hook** — Codex will not
+  run an untrusted hook (trust is pinned to the file's content hash).
 
 Requires `python3` (stdlib only — zero dependencies).
+
+### How the two harnesses differ (and why one adapter works)
+
+Codex CLI adopted the same `PreToolUse` hook contract as Claude Code (stdin JSON
+event → stdout `hookSpecificOutput` decision), so `hooks/no_nuke.py` serves
+both. It absorbs the differences automatically:
+
+| | Claude Code | Codex CLI |
+|---|---|---|
+| Shell command | `tool_input.command` string | often an argv array `["bash","-lc","…"]` (normalized) |
+| Edit tool | `Write` / `Edit` / `MultiEdit` (`file_path`) | `apply_patch` (paths parsed from the patch) |
+| allow / warn | `defer` (+ `additionalContext` on warn) | emit no decision → Codex's own approval flow |
+| deny / ask | `permissionDecision: deny` / `ask` | same |
+
+Codex also has a separate `rules`/execpolicy layer (Starlark, for the
+sandbox-escalation gate) and OS sandboxing — no-nuke complements those; it is the
+content-aware, cross-harness layer.
 
 ## Per-project config
 

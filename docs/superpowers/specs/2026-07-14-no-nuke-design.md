@@ -81,6 +81,36 @@ critical verdicts unchanged. The Write/Edit hook additionally **denies agent
 edits to `.no-nuke.json`** so the guard can't disarm itself. Every non-allow
 event is appended to `~/.no-nuke/audit.jsonl` (best-effort, never raises).
 
+## Codex CLI support
+
+Codex CLI adopted the same `PreToolUse` hook contract as Claude Code (stdin JSON
+event → stdout `hookSpecificOutput` with `permissionDecision` deny/allow/ask, or
+exit-code 2), discovered at `~/.codex/hooks.json` (or inline `[hooks]` in
+`config.toml`). A single adapter (`hooks/no_nuke.py`) therefore serves both
+harnesses; it absorbs the differences:
+
+- **Command shape** — Codex's shell tool passes `command` as an argv array
+  (e.g. `["bash","-lc","rm -rf /"]`); `_normalize_command` extracts the inner
+  `-c`/`-lc` script or reconstructs a string, so the engine sees a normal
+  command. Claude's string form passes through unchanged.
+- **Edit tool** — Codex edits via `apply_patch`; `_apply_patch_paths` parses
+  `*** Add/Update/Delete File:` targets and runs the protected-file check on
+  each. Claude's `Write`/`Edit`/`MultiEdit` use `file_path`.
+- **Tool matching** — shell is detected by known tool names *or* the presence of
+  a `command` field, so an unexpected Codex tool name still gets checked.
+- **allow/warn dialect** — `--harness codex` emits *no decision* on allow/warn
+  (Codex proceeds via its own approval flow; the risk is still audit-logged),
+  avoiding any dependence on Codex honoring Claude's `defer`/`additionalContext`
+  values. deny/ask use the shared, mutually-supported JSON.
+
+Codex additionally requires the hook to be **trusted** via `/hooks` in its TUI
+(content-hash pinned) before it runs — surfaced in the installer output. Codex's
+own `rules`/execpolicy (Starlark, sandbox-escalation gate) and OS sandbox are
+complementary layers; no-nuke is the content-aware, cross-harness one.
+
+The engine and CLI are harness-independent, so any other framework can gate on
+`no-nuke check "<cmd>"` (exit 0/1/2).
+
 ## Packaging
 
 - `.claude-plugin/plugin.json` + `hooks/hooks.json` (matcher
