@@ -153,6 +153,20 @@ class GitTests(unittest.TestCase):
         self.assertEqual(verdict("git stash drop").action, "warn")
         self.assertEqual(verdict("git stash clear").action, "warn")
 
+    def test_global_option_C_does_not_bypass(self):
+        # `git -C <dir>` puts a global option before the subcommand; it must
+        # not hide a force-push / reset --hard from the guard.
+        self.assertEqual(
+            verdict("git -C /repo push --force origin main").action, "deny")
+        self.assertEqual(
+            verdict("git -C . reset --hard").action, "ask")
+
+    def test_global_config_option_does_not_bypass(self):
+        self.assertEqual(
+            verdict("git -c user.name=x reset --hard").action, "ask")
+        self.assertEqual(
+            verdict("git --git-dir=/r/.git clean -fd").action, "ask")
+
     def test_normal_git_allowed(self):
         for c in ("git status", "git commit -m x", "git push origin main",
                   "git pull", "git log --oneline"):

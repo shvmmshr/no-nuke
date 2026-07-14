@@ -456,16 +456,38 @@ def _check_overwrite(argv, subcmd, cwd, config):
 
 _PROTECTED_BRANCHES = {"main", "master", "release", "production", "prod"}
 
+# git global options that appear BEFORE the subcommand. Some consume the next
+# token as a value (e.g. `git -C <dir> push`, `git -c x=y commit`).
+_GIT_GLOBAL_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                         "--super-prefix", "--config-env"}
+
+
+def _git_subcommand(args):
+    """
+    Skip git global options and return (subcommand, remaining_args). Handles
+    `git -C <dir> push …`, `git -c a=b reset …`, `git --git-dir=… clean …` so
+    global options can't hide the real subcommand.
+    """
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in _GIT_GLOBAL_VALUE_OPTS:
+            i += 2                      # option + its value
+            continue
+        if a.startswith("-"):
+            i += 1                      # value-less global flag (--paginate, …)
+            continue
+        return a, args[i + 1:]          # first bareword is the subcommand
+    return None, []
+
 
 def _check_git(argv, subcmd):
     if not argv or _basename(argv[0]) != "git":
         return None
-    args = argv[1:]
-    if not args:
+    sub, rest = _git_subcommand(argv[1:])
+    if sub is None:
         return None
-    sub = args[0]
-    rest = args[1:]
-    text = " ".join(args)
+    text = " ".join([sub] + rest)
 
     if sub == "push":
         forced = ("-f" in rest) or ("--force" in rest)
