@@ -1,6 +1,6 @@
 <div align="center">
 
-# no-nuke 🚫☢️
+# no-nuke
 
 **A destructive-command guard for AI coding agents.**
 
@@ -121,10 +121,10 @@ to the engine, which:
 
 | Tier | Action | Meaning | Examples |
 |------|--------|---------|----------|
-| 🔴 **critical** | **deny** | Blocked outright | `rm -rf /`, `dd of=/dev/sda`, force-push to `main`, `DROP DATABASE`, `terraform destroy`, `shutdown` |
-| 🟠 **high** | **ask** | Human must confirm | `rm -rf <dir>`, `git reset --hard`, `git clean -fd`, `DROP TABLE`, `kubectl delete --all`, any `sudo` |
-| 🟡 **medium** | **warn** | Runs, but flagged | `chmod -R`, `docker system prune`, `git stash drop`, `brew uninstall` |
-| ⚪ *none* | *allow* | Silent | everything else — the guard never auto-approves unrelated commands |
+| **critical** | **deny** | Blocked outright | `rm -rf /`, `dd of=/dev/sda`, force-push to `main`, `DROP DATABASE`, `terraform destroy`, `shutdown` |
+| **high** | **ask** | Human must confirm | `rm -rf <dir>`, `git reset --hard`, `git clean -fd`, `DROP TABLE`, `kubectl delete --all`, any `sudo` |
+| **medium** | **warn** | Runs, but flagged | `chmod -R`, `docker system prune`, `git stash drop`, `brew uninstall` |
+| *none* | *allow* | Silent | everything else — the guard never auto-approves unrelated commands |
 
 ## What it catches
 
