@@ -257,7 +257,8 @@ catastrophes — and to escalate to *ask* whenever it can't be sure.
 Issues and PRs welcome — especially new rules and false-positive reports. Please
 include a test case (a command + its expected tier) with any rule change. The
 whole engine is dependency-free Python, so `python3 -m unittest discover -s
-tests` is the entire CI.
+tests` is the entire CI. See [`docs/DESIGN.md`](docs/DESIGN.md) for the
+architecture.
 
 ## License
 
