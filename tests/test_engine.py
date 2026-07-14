@@ -289,10 +289,13 @@ class CompoundObfuscationTests(unittest.TestCase):
 
 class ProtectedPathTests(unittest.TestCase):
     def test_relative_traversal_to_home(self):
+        # `../../../..` from cwd resolves to /Users, an ancestor of the
+        # protected /Users/example -> deny. Explicit config keeps this
+        # independent of the machine's actual $HOME.
+        cfg = Config(absolute_protected=["/Users/example"])
         cwd = "/Users/example/Developer/a/b"
         self.assertEqual(
-            check("rm -rf ../../../..", cwd=cwd,
-                  config=Config.default()).action, "deny")
+            check("rm -rf ../../../..", cwd=cwd, config=cfg).action, "deny")
 
     def test_git_dir_delete_denied(self):
         self.assertEqual(verdict("rm -rf .git").action, "deny")
