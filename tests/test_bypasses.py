@@ -202,5 +202,30 @@ class MoveOverwriteTests(unittest.TestCase):
                 self.assertEqual(action(cmd), "allow")
 
 
+class InlineScriptTests(unittest.TestCase):
+    """Interpreters running destructive code passed on the command line."""
+
+    def test_destructive_inline_code_asks(self):
+        for cmd in (
+            "python3 -c \"import shutil; shutil.rmtree('/')\"",
+            "python -c 'import os; os.system(\"rm -rf build\")'",
+            "node -e \"require('fs').rmSync('/', {recursive: true})\"",
+            "node --eval \"require('child_process').execSync('rm -rf ~')\"",
+            "perl -e 'system(\"rm -rf /\")'",
+            "ruby -e 'FileUtils.rm_rf(\"/\")'",
+            "bun -e \"await Bun.$`rm -rf dist`\"",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "ask")
+
+    def test_benign_inline_code_allowed(self):
+        for cmd in ("python3 -c 'print(1)'",
+                    "node -e \"console.log(process.version)\"",
+                    "python3 -c 'import json,sys; print(json.load(sys.stdin))'",
+                    "python3 script.py", "node server.js"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()

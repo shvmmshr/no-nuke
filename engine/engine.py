@@ -561,6 +561,53 @@ def _xargs_command(argv):
     return []
 
 
+# Interpreters and the options that pass them a program as a string.
+_INLINE_CODE_OPTS = {
+    "python": {"-c"}, "node": {"-e", "--eval", "-p", "--print"},
+    "nodejs": {"-e", "--eval", "-p", "--print"}, "bun": {"-e", "--eval"},
+    "deno": {"eval"}, "perl": {"-e", "-E"}, "ruby": {"-e"}, "php": {"-r"},
+}
+# Library calls that delete a whole tree in one go.
+_INLINE_TREE_DELETE = re.compile(
+    r"\b(rmtree|removedirs|rmSync|rmdirSync|rimraf|rm_rf|rm_r|remove_dir_all)\b")
+# Calls that hand a string to the shell or spawn a process.
+_INLINE_SHELL_EXEC = re.compile(
+    r"\b(system|exec|execSync|execFileSync|spawn|spawnSync|popen|Popen|"
+    r"subprocess|child_process|shell_exec|passthru|check_output|check_call)\b")
+
+
+def _interpreter_name(cmd):
+    """python3.12 -> python, nodejs -> nodejs; None for anything else."""
+    name = re.sub(r"[\d.]+$", "", cmd)
+    return name if name in _INLINE_CODE_OPTS else None
+
+
+def _check_inline_script(argv, subcmd):
+    """
+    `python -c`, `node -e`, `perl -e` and friends run code that cannot be
+    parsed like a shell command. Ask when that code deletes a directory tree,
+    or shells out with a destructive-looking command.
+    """
+    name = _interpreter_name(_basename(argv[0])) if argv else None
+    if name is None:
+        return None
+    opts = _INLINE_CODE_OPTS[name]
+    code = next((argv[i + 1] for i in range(1, len(argv) - 1)
+                 if argv[i] in opts), None)
+    if code is None:
+        return None
+    if _INLINE_TREE_DELETE.search(code) or (
+            _INLINE_SHELL_EXEC.search(code) and _DESTRUCTIVE_TOKENS.search(code)):
+        return _verdict_for_tier(
+            "high", "exec.inline_script",
+            f"`{name}` runs inline code that deletes files or shells out to a "
+            "destructive command; it cannot be inspected like a shell command.",
+            "Run the destructive step as a plain shell command so it can be "
+            "checked, or write the script to a file for review.",
+            subcmd)
+    return None
+
+
 def _check_pipe_to_shell(command, subcmds):
     """
     Detect a pipeline feeding a bare shell interpreter or decode-then-exec,
@@ -1153,6 +1200,7 @@ def check(command, cwd=None, config=None, _depth=0):
         for checker in (
             lambda: _check_shell_exec(argv, sub, cwd, config, _depth),
             lambda: _check_obfuscation(sub, argv),
+            lambda: _check_inline_script(argv, sub),
             lambda: _check_rm(argv, sub, cwd, config),
             lambda: _check_overwrite(argv, sub, cwd, config),
             lambda: _check_move_copy(argv, sub, cwd, config),
