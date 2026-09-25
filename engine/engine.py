@@ -396,6 +396,8 @@ def _resolve(path, cwd):
     return os.path.normpath(p)
 
 
+_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
+
 _HOME_VAR = re.compile(r"^(\$HOME|\$\{HOME\})(?=/|$)")
 _PWD_VAR = re.compile(r"^(\$PWD|\$\{PWD\})(?=/|$)")
 
@@ -435,11 +437,13 @@ def _is_protected_target(path, cwd, config):
         if prot is not None:
             return (prot, kind)
 
-    # Basename-pattern protection (.git, .env, .env.*, id_rsa ...).
+    # Basename-pattern protection (.git, .env, .env.*, id_rsa ...). Committed
+    # templates like .env.example hold no secrets, so they are exempt.
     base = os.path.basename(raw.rstrip("/"))
-    for pat in config.name_protected:
-        if _fnmatch_name(base, pat):
-            return (pat, "name")
+    if not base.endswith(_TEMPLATE_SUFFIXES):
+        for pat in config.name_protected:
+            if _fnmatch_name(base, pat):
+                return (pat, "name")
 
     resolved = _resolve(raw, cwd)
     for prot in config.absolute_protected:
@@ -698,6 +702,74 @@ def _check_overwrite(argv, subcmd, cwd, config):
                 f"({target}).",
                 "Append with >> or write to a different file; back up secrets "
                 "first.",
+                subcmd)
+    return None
+
+
+# Options of mv / cp / truncate that take a separate value argument.
+_MOVE_VALUE_OPTS = {"-t", "--target-directory", "-S", "--suffix",
+                    "-s", "--size", "-r", "--reference"}
+_NO_CLOBBER = {"-n", "--no-clobber", "-i", "--interactive"}
+
+
+def _operands(argv):
+    """Positional operands of mv/cp/truncate, skipping option values."""
+    out = []
+    skip_next = False
+    for tok in argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _MOVE_VALUE_OPTS:
+            skip_next = True
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            continue
+        out.append(tok)
+    return out
+
+
+def _check_move_copy(argv, subcmd, cwd, config):
+    """
+    mv of a protected path moves it out of place; mv/cp onto a protected file
+    (or truncate of one) destroys its contents. Both need a human.
+    """
+    cmd = _basename(argv[0]) if argv else ""
+    if cmd not in ("mv", "cp", "truncate"):
+        return None
+    operands = _operands(argv)
+
+    if cmd == "truncate":
+        for target in operands:
+            prot, kind = _is_protected_target(target, cwd, config)
+            if prot and kind == "name":
+                return _verdict_for_tier(
+                    "high", "fs.truncate_protected",
+                    f"`truncate` would wipe a protected file ({target}).",
+                    "Back up the file first, or truncate a different file.",
+                    subcmd)
+        return None
+
+    if len(operands) < 2:
+        return None
+    sources, dest = operands[:-1], operands[-1]
+    if cmd == "mv":
+        for src in sources:
+            prot, _ = _is_protected_target(src, cwd, config)
+            if prot:
+                return _verdict_for_tier(
+                    "high", "fs.mv_protected",
+                    f"`mv` would move a protected path ({src}) out of place.",
+                    "Copy it instead, or ask the human to move it.",
+                    subcmd)
+    if not any(tok in _NO_CLOBBER for tok in argv[1:]):
+        prot, kind = _is_protected_target(dest, cwd, config)
+        if prot and kind == "name":
+            return _verdict_for_tier(
+                "high", "fs.overwrite_protected",
+                f"`{cmd}` would overwrite a protected file ({dest}).",
+                f"Use `{cmd} -n` so an existing file is never replaced, or back "
+                "it up first.",
                 subcmd)
     return None
 
@@ -1083,6 +1155,7 @@ def check(command, cwd=None, config=None, _depth=0):
             lambda: _check_obfuscation(sub, argv),
             lambda: _check_rm(argv, sub, cwd, config),
             lambda: _check_overwrite(argv, sub, cwd, config),
+            lambda: _check_move_copy(argv, sub, cwd, config),
             lambda: _check_git(argv, sub),
             lambda: _check_sql(command, argv),
             lambda: _check_declarative(argv, sub, rules),

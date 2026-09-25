@@ -170,5 +170,37 @@ class XargsTests(unittest.TestCase):
         self.assertEqual(action("git ls-files | xargs wc -l"), "allow")
 
 
+class MoveOverwriteTests(unittest.TestCase):
+    """Moving a protected path away, or writing over one, needs a human."""
+
+    def test_moving_protected_paths_asks(self):
+        for cmd in ("mv .git /tmp/x", "mv ~/.ssh /tmp/keys",
+                    "mv ~/Developer /tmp/dev", "mv .env .env.bak"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "ask")
+
+    def test_overwriting_protected_files_asks(self):
+        for cmd in ("mv notes.txt .env", "cp /dev/null .env",
+                    "cp .env.example .env", "truncate -s 0 .env",
+                    "mv -f key.new id_ed25519"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "ask")
+
+    def test_no_clobber_copies_allowed(self):
+        self.assertEqual(action("cp -n .env.example .env"), "allow")
+        self.assertEqual(action("cp --no-clobber .env.example .env"), "allow")
+
+    def test_templates_are_not_secrets(self):
+        for cmd in ("rm .env.example", "mv .env.example .env.sample",
+                    "cp .env.example .env.local.example", "rm config.pem.dist"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "allow")
+
+    def test_ordinary_moves_allowed(self):
+        for cmd in ("mv a.txt b.txt", "cp -r src dist", "truncate -s 0 app.log"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()
