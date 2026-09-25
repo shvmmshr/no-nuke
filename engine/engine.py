@@ -89,11 +89,46 @@ def _verdict_for_tier(tier, rule_id, reason, suggestion, matched):
 # Command-line splitting (quote-aware, keeps operators out)
 # --------------------------------------------------------------------------- #
 
+def _group_end(command, i):
+    """
+    Given command[i] == "(" that opens $( ... ), <( ... ) or >( ... ), return
+    the index just past its matching ")". Quote aware; unbalanced input runs to
+    the end of the string.
+    """
+    depth = 0
+    quote = None
+    n = len(command)
+    while i < n:
+        c = command[i]
+        if quote:
+            if c == "\\" and quote == '"' and i + 1 < n:
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in ("'", '"'):
+            quote = c
+        elif c == "\\" and i + 1 < n:
+            i += 2
+            continue
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
 def split_commands(command):
     """
     Split a shell command line into sub-command strings on unquoted
-    &&, ||, ;, | and newline. Quote and backslash aware. Does NOT split on a
-    single & (background) so that redirections like 2>&1 stay intact.
+    &&, ||, ;, |, newline, and the subshell parentheses ( and ). Quote and
+    backslash aware. Substitutions $( ... ), <( ... ), >( ... ) and backticks
+    are kept whole inside their word (their contents are checked separately).
+    Does NOT split on a single & (background) so that redirections like 2>&1
+    stay intact.
     """
     parts = []
     buf = []
@@ -102,6 +137,11 @@ def split_commands(command):
     quote = None
     while i < n:
         c = command[i]
+        if c == "$" and quote != "'" and command[i + 1:i + 2] == "(":
+            end = _group_end(command, i + 1)
+            buf.append(command[i:end])
+            i = end
+            continue
         if quote:
             buf.append(c)
             if c == quote:
@@ -118,13 +158,24 @@ def split_commands(command):
             buf.append(command[i + 1])
             i += 2
             continue
+        if c == "`":
+            end = command.find("`", i + 1)
+            end = n if end == -1 else end + 1
+            buf.append(command[i:end])
+            i = end
+            continue
+        if c in ("<", ">") and command[i + 1:i + 2] == "(":
+            end = _group_end(command, i + 1)
+            buf.append(command[i:end])
+            i = end
+            continue
         two = command[i:i + 2]
         if two in ("&&", "||"):
             parts.append("".join(buf))
             buf = []
             i += 2
             continue
-        if c in (";", "|", "\n"):
+        if c in (";", "|", "\n", "(", ")"):
             parts.append("".join(buf))
             buf = []
             i += 1
@@ -142,12 +193,104 @@ def _parse_argv(subcmd):
         argv = shlex.split(subcmd, posix=True)
     except ValueError:
         return None
-    # Drop leading "env VAR=x" style prefixes and inline VAR=x assignments.
-    while argv and (argv[0] == "env" or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0])):
+    # Drop leading inline VAR=x assignments; wrappers are removed by _unwrap.
+    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
         argv = argv[1:]
-    # Strip a leading "sudo"/"command"/"nohup"/"time" wrapper for name matching,
-    # but remember whether sudo was present.
     return argv
+
+
+# Shell reserved words that can start a sub-command without being the command
+# itself (after splitting `if x; then rm -rf /; fi` on `;`).
+_SHELL_KEYWORDS = {"!", "{", "}", "if", "then", "else", "elif", "while",
+                   "until", "do", "done", "fi", "esac"}
+
+# Commands that run another command. Value: the options that take a separate
+# value argument, so the value is not mistaken for the wrapped command.
+_WRAPPERS = {
+    "nohup": set(),
+    "time": set(),
+    "command": set(),
+    "builtin": set(),
+    "exec": {"-a"},
+    "setsid": set(),
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "stdbuf": {"-i", "-o", "-e"},
+    "ionice": {"-c", "-n", "-p", "-t"},
+    "caffeinate": {"-t", "-w"},
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R"},
+    "doas": {"-u", "-C"},
+}
+_PRIVILEGE_WRAPPERS = {"sudo", "doas"}
+# Wrappers whose first positional argument is not the command (timeout DURATION).
+_WRAPPER_POSITIONAL_SKIP = {"timeout": 1}
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _strip_wrapper(argv):
+    """
+    Remove one wrapper (and its options) from the front of argv. Returns the
+    wrapped argv, or None when argv[0] is not a wrapper we can see through.
+    """
+    name = _basename(argv[0])
+    if name not in _WRAPPERS:
+        return None
+    # `command -v rm` looks a command up; it does not run it.
+    if name == "command" and len(argv) > 1 and argv[1] in ("-v", "-V"):
+        return None
+    value_opts = _WRAPPERS[name]
+    positional_skip = _WRAPPER_POSITIONAL_SKIP.get(name, 0)
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            i += 1
+            break
+        if name == "env" and tok in ("-S", "--split-string") and i + 1 < len(argv):
+            # env -S "cmd args" runs the split string as the command.
+            try:
+                return shlex.split(argv[i + 1]) + argv[i + 2:]
+            except ValueError:
+                return argv[i + 1:]
+        if tok in value_opts:
+            i += 2
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            i += 1
+            continue
+        if name == "env" and _ASSIGNMENT.match(tok):
+            i += 1
+            continue
+        if positional_skip:
+            positional_skip -= 1
+            i += 1
+            continue
+        break
+    return argv[i:]
+
+
+def _unwrap(argv):
+    """
+    Peel shell keywords and command wrappers off the front of argv so checkers
+    see the command that actually runs: `nohup timeout 5 sudo -u root rm -rf /`
+    -> `rm -rf /`. Returns (argv, had_privilege_wrapper).
+    """
+    had_sudo = False
+    while argv:
+        if argv[0] in _SHELL_KEYWORDS:
+            argv = argv[1:]
+            continue
+        if _ASSIGNMENT.match(argv[0]):
+            argv = argv[1:]
+            continue
+        inner = _strip_wrapper(argv)
+        if inner is None:
+            break
+        if _basename(argv[0]) in _PRIVILEGE_WRAPPERS:
+            had_sudo = True
+        argv = inner
+    return argv, had_sudo
 
 
 def _basename(cmd):
@@ -735,15 +878,12 @@ def check(command, cwd=None, config=None, _depth=0):
         if not argv:
             continue
 
-        # Strip a leading sudo but flag it.
-        had_sudo = False
-        while argv and _basename(argv[0]) in ("sudo", "doas"):
-            had_sudo = True
-            argv = argv[1:]
-            # rebuild sub without the sudo prefix for downstream regexes
-            sub = re.sub(r"^\s*(sudo|doas)\s+", "", sub, count=1)
-            if not argv:
-                break
+        # See through keywords and wrappers (flagging sudo/doas).
+        unwrapped, had_sudo = _unwrap(argv)
+        if unwrapped != argv:
+            # Downstream regexes match on text; give them the real command.
+            sub = " ".join(unwrapped)
+        argv = unwrapped
         if not argv:
             if had_sudo:
                 worst = _worst(worst, _verdict_for_tier(
