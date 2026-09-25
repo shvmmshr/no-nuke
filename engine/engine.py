@@ -753,6 +753,54 @@ def _check_overwrite(argv, subcmd, cwd, config):
     return None
 
 
+CONFIG_FILENAME = ".no-nuke.json"
+# Commands that only read their file arguments.
+_READ_ONLY_COMMANDS = {"cat", "less", "more", "head", "tail", "grep", "egrep",
+                       "fgrep", "rg", "wc", "ls", "stat", "file", "diff", "jq",
+                       "bat", "echo", "printf", "test", "[", "realpath",
+                       "readlink", "basename", "dirname", "md5", "shasum",
+                       "sha256sum"}
+_READ_ONLY_GIT = {"diff", "log", "show", "status", "blame", "ls-files", "add"}
+_REDIRECT_TARGET = re.compile(r"(?<![0-9<])>>?\|?\s*([^\s;&|<>]+)")
+
+
+def _check_config_self_edit(argv, subcmd):
+    """
+    Deny any shell command that could write, move or delete .no-nuke.json. The
+    Write/Edit hook already blocks direct edits; without this, `echo ... >
+    .no-nuke.json` would disarm the guard from the shell. Reading and copying
+    the file elsewhere stay allowed.
+    """
+    if CONFIG_FILENAME not in subcmd:
+        return None
+
+    def is_config(token):
+        return os.path.basename(token.strip("'\"")) == CONFIG_FILENAME
+
+    writes = any(is_config(m.group(1)) for m in _REDIRECT_TARGET.finditer(subcmd))
+    if not writes and argv:
+        cmd = _basename(argv[0])
+        operands = [t for t in argv[1:] if not t.startswith("-")]
+        if cmd in _READ_ONLY_COMMANDS:
+            writes = False
+        elif cmd == "git":
+            sub, _ = _git_subcommand(argv[1:])
+            writes = sub not in _READ_ONLY_GIT
+        elif cmd == "cp":
+            writes = bool(operands) and is_config(operands[-1])
+        else:
+            # Any other command handed the config (or code naming it) may write it.
+            writes = any(CONFIG_FILENAME in t for t in argv[1:])
+    if not writes:
+        return None
+    return _verdict_for_tier(
+        "critical", "config.self_edit",
+        "This would change or remove .no-nuke.json, letting an agent weaken its "
+        "own safety guard.",
+        "Changes to no-nuke's config must be made by a human.",
+        subcmd)
+
+
 # Options of mv / cp / truncate that take a separate value argument.
 _MOVE_VALUE_OPTS = {"-t", "--target-directory", "-S", "--suffix",
                     "-s", "--size", "-r", "--reference"}
@@ -1153,9 +1201,6 @@ def check(command, cwd=None, config=None, _depth=0):
                        "safely.",
                        "Flatten the command so it can be reviewed.", command)
 
-    if config.disabled:
-        return Verdict("allow")
-
     rules = load_rules()
     subcmds = split_commands(command)
     worst = None
@@ -1204,6 +1249,7 @@ def check(command, cwd=None, config=None, _depth=0):
             lambda: _check_rm(argv, sub, cwd, config),
             lambda: _check_overwrite(argv, sub, cwd, config),
             lambda: _check_move_copy(argv, sub, cwd, config),
+            lambda: _check_config_self_edit(argv, sub),
             lambda: _check_git(argv, sub),
             lambda: _check_sql(command, argv),
             lambda: _check_declarative(argv, sub, rules),
@@ -1220,6 +1266,11 @@ def check(command, cwd=None, config=None, _depth=0):
                 sub))
 
     if worst is None:
+        return Verdict("allow")
+
+    # A disabled guard still enforces critical rules: the config file is the
+    # one thing a compromised agent might manage to write.
+    if config.disabled and worst.tier != "critical":
         return Verdict("allow")
 
     # Apply config overrides (cannot relax critical rules).

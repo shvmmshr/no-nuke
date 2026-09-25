@@ -345,10 +345,20 @@ class ConfigOverrideTests(unittest.TestCase):
             check("rm -rf /Users/example/proj/data",
                   cwd=CWD, config=cfg).action, "deny")
 
-    def test_disabled_allows_everything(self):
+    def test_disabled_relaxes_non_critical_rules(self):
         cfg = Config(disabled=True)
-        self.assertEqual(check("rm -rf /", cwd=CWD, config=cfg).action,
+        self.assertEqual(check("rm -rf build", cwd=CWD, config=cfg).action,
                          "allow")
+        self.assertEqual(check("git reset --hard", cwd=CWD, config=cfg).action,
+                         "allow")
+
+    def test_disabled_cannot_turn_off_critical(self):
+        # A config is attacker-writable in the worst case; critical always wins.
+        cfg = Config(disabled=True)
+        self.assertEqual(check("rm -rf /", cwd=CWD, config=cfg).action, "deny")
+        self.assertEqual(
+            check("git push -f origin main", cwd=CWD, config=cfg).action,
+            "deny")
 
 
 if __name__ == "__main__":

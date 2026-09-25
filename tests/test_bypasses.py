@@ -227,5 +227,36 @@ class InlineScriptTests(unittest.TestCase):
                 self.assertEqual(action(cmd), "allow")
 
 
+class ConfigSelfEditTests(unittest.TestCase):
+    """The shell must not be a way around the Write-tool block on the config."""
+
+    def test_shell_writes_to_config_denied(self):
+        for cmd in (
+            "echo '{\"disabled\": true}' > .no-nuke.json",
+            "printf '{}' >> .no-nuke.json",
+            "echo '{}' | tee .no-nuke.json",
+            "rm .no-nuke.json",
+            "mv .no-nuke.json /tmp/x",
+            "cp /tmp/evil.json .no-nuke.json",
+            "truncate -s 0 .no-nuke.json",
+            "sed -i '' 's/false/true/' .no-nuke.json",
+            "python3 -c \"open('.no-nuke.json','w').write('{}')\"",
+            "git checkout -- .no-nuke.json",
+            "cat > ../.no-nuke.json <<EOF",
+        ):
+            with self.subTest(cmd=cmd):
+                verdict = check(cmd, cwd=CWD, config=Config.default())
+                self.assertEqual(verdict.action, "deny")
+                self.assertEqual(verdict.rule_id, "config.self_edit")
+
+    def test_reading_config_allowed(self):
+        for cmd in ("cat .no-nuke.json", "jq . .no-nuke.json",
+                    "grep allow .no-nuke.json", "git diff .no-nuke.json",
+                    "cp .no-nuke.json /tmp/backup.json", "ls -la .no-nuke.json",
+                    "cp .no-nuke.example.json /tmp/x.json"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()
