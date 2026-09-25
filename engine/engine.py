@@ -396,6 +396,24 @@ def _resolve(path, cwd):
     return os.path.normpath(p)
 
 
+_HOME_VAR = re.compile(r"^(\$HOME|\$\{HOME\})(?=/|$)")
+_PWD_VAR = re.compile(r"^(\$PWD|\$\{PWD\})(?=/|$)")
+
+
+def _normalize_target(path):
+    """
+    Canonical spelling for protected-path checks: $HOME and ${HOME} become ~,
+    $PWD and ${PWD} become ., and trailing slashes go (`~/` is `~`, `../` is
+    `..`). Only these two variables are expanded; anything else stays literal.
+    """
+    p = path.strip()
+    p = _HOME_VAR.sub("~", p)
+    p = _PWD_VAR.sub(".", p)
+    if len(p) > 1:
+        p = p.rstrip("/") or "/"
+    return p
+
+
 def _is_protected_target(path, cwd, config):
     """
     Return (protected_path, kind) if deleting/overwriting `path` would hit a
@@ -404,11 +422,18 @@ def _is_protected_target(path, cwd, config):
     kind is "absolute" (matched an absolute protected dir) or "name" (matched a
     protected basename like .git / .env).
     """
-    raw = path.strip()
+    raw = _normalize_target(path)
 
     # Bare dangerous tokens.
     if raw in ("/", "~", "$HOME", "${HOME}", "*", ".", "..", "./*", "~/*"):
         return (raw, "wildcard")
+
+    # `dir/*` and `dir/.*` empty the whole directory: judge them as `dir`.
+    head, tail = os.path.split(raw)
+    if tail in ("*", ".*") and head:
+        prot, kind = _is_protected_target(head, cwd, config)
+        if prot is not None:
+            return (prot, kind)
 
     # Basename-pattern protection (.git, .env, .env.*, id_rsa ...).
     base = os.path.basename(raw.rstrip("/"))

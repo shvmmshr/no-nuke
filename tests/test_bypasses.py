@@ -105,5 +105,22 @@ class BackgroundAndSubstitutionTests(unittest.TestCase):
                 self.assertEqual(action(cmd), "allow")
 
 
+class PathSpellingTests(unittest.TestCase):
+    """Other spellings of root, home and the project must match too."""
+
+    def test_root_home_and_parent_spellings_denied(self):
+        for cmd in ("rm -rf /*", "rm -rf ~/", "rm -rf ~/*", "rm -rf $HOME/",
+                    "rm -rf ${HOME}", "rm -rf ${HOME}/", "rm -rf \"$HOME\"/",
+                    "rm -rf ../", "rm -rf ./", "rm -rf $PWD",
+                    "rm -rf ~/Developer/*", "rm -rf ${HOME}/.ssh"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "deny")
+
+    def test_scoped_globs_are_not_escalated(self):
+        self.assertEqual(action("rm -rf build/*"), "ask")
+        self.assertEqual(action("rm *.log"), "allow")
+        self.assertEqual(action("rm -rf ~/Developer/app/build"), "ask")
+
+
 if __name__ == "__main__":
     unittest.main()
