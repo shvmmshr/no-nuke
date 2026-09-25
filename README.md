@@ -198,12 +198,13 @@ Drop a `.no-nuke.json` at your repo root (see [`.no-nuke.example.json`](.no-nuke
 | `tier_overrides` | Remap a rule's tier (e.g. `high` → `medium`). |
 | `protected_paths` | Extra dirs to protect from deletion. |
 | `protected_names` | Extra basename globs to protect (e.g. `*.pem`). |
-| `disabled` | Turn the guard off for this repo. |
+| `disabled` | Turn off every ask and warn rule for this repo. Critical denials still apply. |
 
 > **Safety guardrail:** config can only relax **high/medium** rules. **Critical
 > rules can never be disabled or downgraded**, and agents are blocked from
-> editing `.no-nuke.json` itself — so the guard can't be disarmed from inside a
-> session.
+> writing, moving or deleting `.no-nuke.json` itself, whether through the
+> Write/Edit tools or the shell (`echo … > .no-nuke.json`, `sed -i`, `rm`, …),
+> so the guard can't be disarmed from inside a session.
 
 ## Audit log
 

@@ -14,8 +14,10 @@ This project runs **no-nuke**, a PreToolUse guard that inspects every `Bash`,
 
 When you see a message tagged `[no-nuke:<rule_id>]`, the guard has flagged the
 command. **Do not try to route around it** (no `bash -c`, base64 tricks,
-renaming the command, or splitting it to dodge the pattern — the guard inspects
-those too, and dodging a safety guard is never the right move). Instead, take
+renaming the command, wrapping it in `nohup`/`timeout`/`sudo`/a subshell/`$( )`,
+moving it into `python -c` or `node -e`, or splitting it to dodge the pattern.
+The guard inspects those too, and dodging a safety guard is never the right
+move). Instead, take
 the safe alternative it suggests, or explain to the human why you believe the
 command is necessary and let them decide.
 
@@ -33,15 +35,18 @@ command is necessary and let them decide.
 | `kubectl delete ... --all` | Delete named resources; double-check the namespace/context. |
 | `docker system prune` | Review `docker ps -a` / `docker volume ls`; avoid `--volumes`. |
 | bulk `chmod -R` / `chown -R` | Scope to specific files, or verify the tree first. |
+| `cp .env.example .env` / overwriting a secrets file | `cp -n` so an existing file is never replaced; back it up first if it must change. |
+| `find … \| xargs rm -rf` | Print the list first, review it, then delete the named paths. |
 
 ## General habits
 
 - **Back up before bulk or irreversible operations.** A quick copy or `git
   stash` turns a mistake into a non-event.
 - **Prefer dry-run flags** (`-n`, `--dry-run`, `--dryrun`) to preview.
-- **Never disable the guard** by editing `.no-nuke.json` — that file is
-  protected. If a rule is wrong for this repo, tell the human so *they* can
-  adjust the config.
+- **Never disable the guard** by editing `.no-nuke.json`, with a tool or from
+  the shell. Both are blocked, and critical rules apply even when the config
+  says `disabled`. If a rule is wrong for this repo, tell the human so *they*
+  can adjust the config.
 - **When denied, stop and reconsider.** A denial usually means the command is
   broader or more dangerous than intended (wrong path, missing `WHERE`, a
   wildcard). Re-read the command before proposing anything.

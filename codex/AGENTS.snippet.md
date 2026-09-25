@@ -11,8 +11,10 @@
 This machine runs **no-nuke**, a PreToolUse guard that inspects every shell
 command and file edit before it runs and may **deny**, **ask**, or **warn**.
 When you see a message tagged `[no-nuke:<rule_id>]`, the guard has flagged the
-command — **do not try to route around it** (no `bash -c`, base64, renaming, or
-splitting to dodge the pattern; the guard inspects those too). Take the safe
+command — **do not try to route around it** (no `bash -c`, base64, renaming,
+wrappers like `nohup`/`timeout`/`sudo`, subshells, `$( )`, `python -c` or
+`node -e`, or splitting to dodge the pattern; the guard inspects those too).
+Take the safe
 alternative it names, or explain to the human why the command is necessary and
 let them decide.
 
@@ -23,8 +25,10 @@ Reach for these instead:
 - `git push --force` → `git push --force-with-lease`; never force-push `main`.
 - `DELETE`/`TRUNCATE`/`DROP` → add a `WHERE`, back up first, use a transaction.
 - `terraform destroy` / `kubectl delete --all` → plan/review and confirm.
+- Overwriting `.env` or keys → `cp -n`, and back up first.
 - Prefer dry-run flags (`-n`, `--dry-run`, `--dryrun`) and back up before bulk
   or irreversible operations.
 
-Never edit `.no-nuke.json` to weaken the guard — that file is protected.
+Never edit `.no-nuke.json` to weaken the guard, with a tool or from the shell;
+both are blocked, and critical rules apply even when it says `disabled`.
 You can check any command yourself: `no-nuke check "<command>"`.
