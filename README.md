@@ -56,8 +56,10 @@ escalates to *ask* instead of guessing.
 ## Features
 
 - **Hard enforcement**, not advice — a `PreToolUse` hook the model can't ignore.
-- **Structural parsing** — splits `&&`/`|`/`;`, unwraps `bash -c`, `xargs`, and
-  `curl | sh`, so obfuscated commands are still caught while `grep "rm -rf"` is
+- **Structural parsing** — splits `&&`/`|`/`;`/`&` and subshells, sees through
+  wrappers (`nohup`, `timeout`, `env`, `sudo -u`, …), checks `$( )` and
+  backticks, unwraps `bash -c`, `xargs`, `curl | sh` and inline `python -c` /
+  `node -e`, so obfuscated commands are still caught while `grep "rm -rf"` is
   not falsely flagged.
 - **Four categories** — filesystem, git, database/cloud, and system-level.
 - **Tiered** — critical→deny, high→ask, medium→warn. Nothing else is touched.
@@ -108,9 +110,13 @@ cd no-nuke
 A `PreToolUse` hook runs on every shell command and file edit. The command goes
 to the engine, which:
 
-1. **Splits** compound commands on `&&`, `||`, `;`, `|` (quote-aware).
-2. **Unwraps** `bash -c`, `xargs`, and pipes-into-shell so hidden commands are
-   still inspected.
+1. **Splits** compound commands on `&&`, `||`, `;`, `|`, a background `&` and
+   subshell parentheses (quote-aware; `2>&1` stays intact), and checks the
+   commands inside `$( )`, backticks and `<( )`.
+2. **Unwraps** wrappers (`nohup`, `time`, `timeout`, `nice`, `env`, `command`,
+   `exec`, `sudo`/`doas` with options), shell keywords (`if`, `do`, `!`, `{`),
+   `bash -c`, `xargs`, pipes-into-shell and inline interpreter code, so hidden
+   commands are still inspected.
 3. **Parses** each sub-command into argv and runs structural checkers —
    filesystem, git, SQL, cloud, system — plus a declarative ruleset.
 4. **Resolves protected paths**: deletes/overwrites targeting `/`, `~`, `.git`,
@@ -132,17 +138,24 @@ to the engine, which:
 <summary><b>Filesystem</b> — rm, dd, shred, find -delete, chmod -R …</summary>
 
 `rm -rf` on `/` `~` `*` `.` or protected paths → **deny**; on any dir → **ask**.
-`dd of=/dev/*`, `mkfs`, `wipefs -a`, `fdisk /dev/*` → **deny**. `shred`,
-`find -delete`, `find -exec rm`, `rsync --delete` → **ask**. `chmod -R`,
-`chown -R` → **warn**. All flag orders handled (`-rf`, `-fr`, `-r -f`).
+Other spellings count too: `/*`, `~/`, `$HOME/`, `${HOME}`, `../`, `$PWD`, and
+`dir/*` of a protected dir. `dd of=/dev/*`, `mkfs`, `wipefs -a`,
+`fdisk /dev/*` → **deny**. `shred`, `find -delete`, `find -exec rm`,
+`rsync --delete`, `find | xargs rm -rf`, moving a protected path (`mv .git …`)
+and overwriting or truncating a protected file (`cp x .env`,
+`truncate -s 0 .env`) → **ask**; `cp -n` stays allowed. `chmod -R`,
+`chown -R`, `xargs rm` → **warn**. All flag orders handled (`-rf`, `-fr`,
+`-r -f`). Templates such as `.env.example` are not treated as secrets.
 </details>
 
 <details>
 <summary><b>Git</b> — reset --hard, force-push, clean, filter-branch …</summary>
 
-Force-push to `main`/`master`/`prod`, `filter-branch`, `filter-repo` → **deny**.
+Force-push to `main`/`master`/`prod` (including `-fu`, `+main`, `HEAD:main`,
+`refs/heads/main`), deleting a protected remote branch (`--delete main`,
+`:main`), `filter-branch`, `filter-repo` → **deny**.
 `reset --hard`, `clean -f`, `branch -D`, other force-push → **ask**.
-`stash drop/clear`, `checkout -- .` → **warn**. `--force-with-lease`,
+`stash drop/clear`, `checkout -- .`, deleting another remote branch → **warn**. `--force-with-lease`,
 `reset --soft`, `branch -d`, normal push/pull/commit → **allow**.
 </details>
 
