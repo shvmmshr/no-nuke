@@ -122,5 +122,35 @@ class PathSpellingTests(unittest.TestCase):
         self.assertEqual(action("rm -rf ~/Developer/app/build"), "ask")
 
 
+class GitPushRefspecTests(unittest.TestCase):
+    """Every way of forcing or deleting a protected branch."""
+
+    def test_force_or_delete_protected_branch_denied(self):
+        for cmd in ("git push -fu origin main", "git push origin +main",
+                    "git push --force origin HEAD:main",
+                    "git push -f origin refs/heads/main",
+                    "git push origin +HEAD:master",
+                    "git push origin --delete main", "git push origin -d main",
+                    "git push origin :main", "git push origin :refs/heads/main"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "deny")
+
+    def test_force_push_other_branch_asks(self):
+        self.assertEqual(action("git push origin +feature"), "ask")
+        self.assertEqual(action("git push -fu origin feature"), "ask")
+
+    def test_delete_other_remote_branch_warns(self):
+        self.assertEqual(action("git push origin --delete feature"), "warn")
+        self.assertEqual(action("git push origin :feature"), "warn")
+
+    def test_normal_pushes_allowed(self):
+        for cmd in ("git push origin main", "git push -u origin main",
+                    "git push origin feature:feature", "git push origin HEAD",
+                    "git push --force-with-lease origin main", "git push --tags",
+                    "git push origin main:mainline"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()

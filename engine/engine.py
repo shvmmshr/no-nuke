@@ -701,6 +701,69 @@ def _git_subcommand(args):
     return None, []
 
 
+_PUSH_VALUE_OPTS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+
+
+class _Push:
+    """What a `git push` does to which branches, from its flags and refspecs."""
+
+    __slots__ = ("forced", "lease", "hits_protected", "deletes",
+                 "deletes_protected")
+
+    def __init__(self, forced, lease, hits_protected, deletes,
+                 deletes_protected):
+        self.forced = forced
+        self.lease = lease
+        self.hits_protected = hits_protected
+        self.deletes = deletes
+        self.deletes_protected = deletes_protected
+
+
+def _branch_name(ref):
+    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+
+
+def _parse_push(args):
+    """
+    Parse `git push` arguments. A refspec is [+]src[:dst]; + forces that ref,
+    an empty src (`:main`) deletes dst, and dst defaults to src. Flags may be
+    clustered (`-fu`).
+    """
+    shorts, longs, positional = set(), set(), []
+    skip_next = False
+    for tok in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _PUSH_VALUE_OPTS:
+            skip_next = True
+        elif tok.startswith("--"):
+            longs.add(tok[2:].split("=", 1)[0])
+        elif tok.startswith("-") and len(tok) > 1:
+            shorts.update(tok[1:])
+        else:
+            positional.append(tok)
+
+    delete_flag = "d" in shorts or "delete" in longs
+    forced = "f" in shorts or "force" in longs
+    hits_protected = deletes = deletes_protected = False
+    for spec in positional[1:]:                  # positional[0] is the remote
+        if spec.startswith("+"):
+            forced = True
+            spec = spec[1:]
+        src, sep, dst = spec.partition(":")
+        dst = _branch_name(dst if sep else src)
+        is_delete = delete_flag or (sep and not src)
+        protected = dst in _PROTECTED_BRANCHES
+        if is_delete:
+            deletes = True
+            deletes_protected = deletes_protected or protected
+        else:
+            hits_protected = hits_protected or protected
+    lease = any(name.startswith("force-with-lease") for name in longs)
+    return _Push(forced, lease, hits_protected, deletes, deletes_protected)
+
+
 def _check_git(argv, subcmd):
     if not argv or _basename(argv[0]) != "git":
         return None
@@ -710,11 +773,17 @@ def _check_git(argv, subcmd):
     text = " ".join([sub] + rest)
 
     if sub == "push":
-        forced = ("-f" in rest) or ("--force" in rest)
-        lease = any(t.startswith("--force-with-lease") for t in rest)
-        if forced and not lease:
-            hits_protected = any(b in rest for b in _PROTECTED_BRANCHES)
-            if hits_protected:
+        push = _parse_push(rest)
+        if push.deletes_protected:
+            return _verdict_for_tier(
+                "critical", "git.delete_protected_branch",
+                "Deleting a protected branch (main/master/production) on the "
+                "remote removes shared history for everyone.",
+                "Never delete a protected remote branch from an agent; ask the "
+                "human.",
+                subcmd)
+        if push.forced and not push.lease:
+            if push.hits_protected:
                 return _verdict_for_tier(
                     "critical", "git.force_push_protected",
                     "Force-pushing to a protected branch (main/master/"
@@ -728,6 +797,13 @@ def _check_git(argv, subcmd):
                 "Force-push overwrites remote history and can discard commits.",
                 "Prefer `git push --force-with-lease` which refuses to clobber "
                 "unexpected remote changes.",
+                subcmd)
+        if push.deletes:
+            return _verdict_for_tier(
+                "medium", "git.delete_remote_branch",
+                "This deletes a branch on the remote; unmerged commits on it "
+                "are only recoverable from someone's local copy.",
+                "Check the branch is merged (`git branch -r --merged`) first.",
                 subcmd)
 
     if sub == "reset" and ("--hard" in rest):
