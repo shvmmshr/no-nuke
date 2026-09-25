@@ -507,26 +507,54 @@ def _check_shell_exec(argv, subcmd, cwd, config, depth):
         # Handled at the pipeline level (_check_pipe_to_shell).
         return None
 
-    # xargs <cmd ...>: the real command is what follows xargs' own flags.
+    # xargs <cmd ...>: the real command is what follows xargs' own options.
     if cmd == "xargs":
-        rest = []
-        skip_next = False
-        for tok in argv[1:]:
-            if skip_next:
-                skip_next = False
-                continue
-            if tok in ("-I", "-n", "-P", "-d", "-E", "-s"):
-                skip_next = True
-                continue
-            if tok.startswith("-"):
-                continue
-            rest.append(tok)
-        if rest:
-            v = check(" ".join(shlex.quote(t) for t in rest), cwd, config,
-                      _depth=depth + 1)
-            if v.action != "allow":
-                return v
+        inner = _xargs_command(argv)
+        if not inner:
+            return None
+        v = check(" ".join(shlex.quote(t) for t in inner), cwd, config,
+                  _depth=depth + 1)
+        if v.action != "allow":
+            return v
+        # The paths come from stdin, so an unscoped-looking delete is still one.
+        if _basename(inner[0]) in _DELETE_COMMANDS:
+            shorts, longs = _flag_sets(inner)
+            if "r" in shorts or "R" in shorts or "recursive" in longs:
+                return _verdict_for_tier(
+                    "high", "fs.xargs_rm_recursive",
+                    "xargs recursively deletes whatever paths arrive on stdin; "
+                    "the targets cannot be inspected.",
+                    "List the paths first, then delete them explicitly.",
+                    subcmd)
+            return _verdict_for_tier(
+                "medium", "fs.xargs_rm",
+                "xargs deletes whatever files arrive on stdin.",
+                "Check the list of paths before piping it into rm.",
+                subcmd)
     return None
+
+
+_DELETE_COMMANDS = {"rm", "rmdir", "unlink", "shred"}
+_XARGS_VALUE_OPTS = {"-I", "-n", "-P", "-d", "-E", "-s", "-L", "-a",
+                     "--arg-file", "--delimiter", "--max-args", "--max-procs",
+                     "--max-lines", "--max-chars", "--eof", "--replace"}
+
+
+def _xargs_command(argv):
+    """The command xargs will run: everything after xargs' own options."""
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            return argv[i + 1:]
+        if tok in _XARGS_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-") and len(tok) > 1:
+            i += 1
+            continue
+        return argv[i:]
+    return []
 
 
 def _check_pipe_to_shell(command, subcmds):
@@ -577,7 +605,7 @@ def _check_obfuscation(subcmd, argv):
 def _check_rm(argv, subcmd, cwd, config):
     """rm / rmdir / unlink / shred with protected-path awareness."""
     cmd = _basename(argv[0])
-    if cmd not in ("rm", "rmdir", "unlink", "shred"):
+    if cmd not in _DELETE_COMMANDS:
         return None
 
     shorts, longs = _flag_sets(argv)

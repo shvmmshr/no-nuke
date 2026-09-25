@@ -152,5 +152,23 @@ class GitPushRefspecTests(unittest.TestCase):
                 self.assertEqual(action(cmd), "allow")
 
 
+class XargsTests(unittest.TestCase):
+    """xargs runs the command after its own options, with stdin as targets."""
+
+    def test_inner_flags_are_kept(self):
+        self.assertEqual(action("ls | xargs rm -rf build"), "ask")
+        self.assertEqual(action("xargs -0 -n 1 rm -rf build"), "ask")
+        self.assertEqual(action("xargs rm -rf /"), "deny")
+
+    def test_delete_with_targets_from_stdin(self):
+        self.assertEqual(action("find . -name x | xargs rm -rf"), "ask")
+        self.assertEqual(action("find . | xargs -I{} rm -rf {}"), "ask")
+        self.assertEqual(action("find . -name '*.pyc' | xargs rm"), "warn")
+
+    def test_benign_xargs_allowed(self):
+        self.assertEqual(action("echo a b | xargs echo"), "allow")
+        self.assertEqual(action("git ls-files | xargs wc -l"), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()
