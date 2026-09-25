@@ -82,5 +82,28 @@ class ShellSyntaxTests(unittest.TestCase):
                 self.assertEqual(action(cmd), "allow")
 
 
+class BackgroundAndSubstitutionTests(unittest.TestCase):
+    """Commands after & and inside substitutions run too."""
+
+    def test_command_after_background_ampersand(self):
+        for cmd in ("sleep 1 & rm -rf /", "true & git push -f origin main"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "deny")
+
+    def test_substitution_contents_are_checked(self):
+        for cmd in ("echo $(rm -rf /)", 'echo "$(rm -rf /)"',
+                    "echo `rm -rf /`", "cat <(rm -rf /)",
+                    "x=$(git push --force origin main)"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "deny")
+
+    def test_redirections_with_ampersand_stay_allowed(self):
+        for cmd in ("npm run build 2>&1 | tail -5", "sleep 2 & echo done",
+                    "make &> build.log", "echo hi >&2", "make |& tee log",
+                    "echo $(date)", "echo `whoami`"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(action(cmd), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()

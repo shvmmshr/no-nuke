@@ -127,8 +127,8 @@ def split_commands(command):
     &&, ||, ;, |, newline, and the subshell parentheses ( and ). Quote and
     backslash aware. Substitutions $( ... ), <( ... ), >( ... ) and backticks
     are kept whole inside their word (their contents are checked separately).
-    Does NOT split on a single & (background) so that redirections like 2>&1
-    stay intact.
+    A lone & (background) splits too; the & inside redirections such as 2>&1
+    and &>file does not.
     """
     parts = []
     buf = []
@@ -175,6 +175,14 @@ def split_commands(command):
             buf = []
             i += 2
             continue
+        # A lone & backgrounds the command before it; the next one still runs.
+        # Keep it when it is part of a redirection: 2>&1, >&2, <&3, &>file.
+        if c == "&" and not (i > 0 and command[i - 1] in "<>") \
+                and command[i + 1:i + 2] != ">":
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
         if c in (";", "|", "\n", "(", ")"):
             parts.append("".join(buf))
             buf = []
@@ -185,6 +193,50 @@ def split_commands(command):
     if buf:
         parts.append("".join(buf))
     return [p.strip() for p in parts if p.strip()]
+
+
+def _substitutions(command):
+    """
+    Return the command strings inside $( ... ), backticks, <( ... ) and
+    >( ... ). They execute even when nested in double quotes, so each one is
+    checked as a command in its own right. Single-quoted text is literal.
+    """
+    found = []
+    i = 0
+    n = len(command)
+    quote = None
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote == "'":
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if c == "'" and quote is None:
+            quote = "'"
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "$" and command[i + 1:i + 2] == "(":
+            end = _group_end(command, i + 1)
+            found.append(command[i + 2:end - 1])
+            i = end
+            continue
+        elif c in ("<", ">") and quote is None and command[i + 1:i + 2] == "(":
+            end = _group_end(command, i + 1)
+            found.append(command[i + 2:end - 1])
+            i = end
+            continue
+        elif c == "`":
+            end = command.find("`", i + 1)
+            end = n if end == -1 else end
+            found.append(command[i + 1:end])
+            i = end + 1
+            continue
+        i += 1
+    return [s for s in found if s.strip()]
 
 
 def _parse_argv(subcmd):
@@ -862,6 +914,12 @@ def check(command, cwd=None, config=None, _depth=0):
 
     # Pipeline-level: piping into a bare shell.
     worst = _worst(worst, _check_pipe_to_shell(command, subcmds))
+
+    # Commands inside $( ), backticks and <( ) run too.
+    for inner in _substitutions(command):
+        v = check(inner, cwd, config, _depth=_depth + 1)
+        if v.action != "allow":
+            worst = _worst(worst, v)
 
     for sub in subcmds:
         argv = _parse_argv(sub)
